@@ -18,7 +18,7 @@ void loop() {
     val = Serial.read();
     Serial1.print(val);
   }
- 
+
   // 若收到藍牙模組的資料，則送到「序列埠監控視窗」
   if (Serial1.available()) {
     val = Serial1.read();

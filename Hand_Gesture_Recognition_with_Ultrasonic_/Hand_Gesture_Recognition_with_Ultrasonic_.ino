@@ -1,3 +1,5 @@
+#include <Ultrasonic.h>
+
 /*
  * HCSR04Ultrasonic/examples/UltrasonicDemo/UltrasonicDemo.pde
  *
@@ -22,8 +24,12 @@ char val;  // 儲存接收資料的變數
 #define TRIGGER_PIN2  12
 #define ECHO_PIN2     13
 
+#define TRIGGER_PIN3  8
+#define ECHO_PIN3     9
+
 Ultrasonic ultrasonic1(TRIGGER_PIN1, ECHO_PIN1);
 Ultrasonic ultrasonic2(TRIGGER_PIN2, ECHO_PIN2);
+Ultrasonic ultrasonic3(TRIGGER_PIN3, ECHO_PIN3);
 
 int usIndex = 0;
 float usSerial1[10] = {0};
@@ -42,12 +48,20 @@ int usStateTemp = -2;
 //4: Top To Down (Open Fan)
 //5: Down To Top (Close Fan)
 
+float downAscend = -1;
+int downAscendTimes = 0;
+float upDescend = -1;
+int upDescendTimes = 0;
+
+
 unsigned long previousMillis = 0;
 const long interval = 3000;
 
+int recoveryState = 0;
+
 void setup() {
   Serial.begin(38400);   // 與電腦序列埠連線
-  Serial.println("Household Remote Control is ready!");
+  Serial.println("Sender: Household Remote Control is ready!");
  
   // 藍牙透傳模式的預設連線速率。
   Serial1.begin(38400);
@@ -56,28 +70,33 @@ void setup() {
 }
 
 void loop() {
-  float cmMsec1, cmMsec2; 
+  float cmMsec1, cmMsec2, cmMsec3; 
 //  float inMsec;
   long microsec1 = ultrasonic1.timing();
   long microsec2 = ultrasonic2.timing();
-
+  long microsec3 = ultrasonic3.timing();
+  
   cmMsec1 = ultrasonic1.convert(microsec1, Ultrasonic::CM);
   cmMsec2 = ultrasonic2.convert(microsec2, Ultrasonic::CM);
+  cmMsec3 = ultrasonic3.convert(microsec3, Ultrasonic::CM);
 //  inMsec = ultrasonic.convert(microsec, Ultrasonic::IN);
 
-  Serial.print("MS1: ");
-  Serial.print(microsec1);
-  Serial.print(", CM1: ");
+//  Serial.print("MS1: ");
+//  Serial.print(microsec1);
+  Serial.print("CM1: ");
   Serial.print(cmMsec1);
-  Serial.print(", usAvg1: ");
-  Serial.print(usAvg1);
-  Serial.println();
-  Serial.print("MS2: ");
-  Serial.print(microsec2);
-  Serial.print(", CM2: ");
+  Serial.print("     ");
+//  Serial.print(", usAvg1: ");
+//  Serial.print(usAvg1);
+//  Serial.print("MS2: ");
+//  Serial.print(microsec2);
+  Serial.print("CM2: ");
   Serial.print(cmMsec2);
-  Serial.print(", usAvg2: ");
-  Serial.print(usAvg2);
+  Serial.print("     ");
+  Serial.print("CM3: ");
+  Serial.print(cmMsec3);
+//  Serial.print(", usAvg2: ");
+//  Serial.print(usAvg2);
   Serial.println();
   Serial.println(usState);
   Serial.println();
@@ -103,22 +122,22 @@ void loop() {
     if( abs(cmMsec1 - cmMsec2) > 100){
       
       if(cmMsec1 < cmMsec2){ //From right to left
-        if(usState == 1){
+        if(usState == 3){
             usState = -1;
         } else if(usState == -1){
           if(abs(abs(cmMsec1 - cmMsec2) - usSmiliarDiff) > 50) {
-            usState = 0;
+            usState = 2;
     //        Serial.println("Fuck From right to left, and open bulb");
             Serial.println("From RRR");
           }
         }
       }
       if(cmMsec1 > cmMsec2){ //From left to right
-        if(usState == 0){
+        if(usState == 2){
             usState = -1;
         } else if(usState == -1){
           if(abs(abs(cmMsec1 - cmMsec2) - usSmiliarDiff) > 50) {
-            usState = 1;
+            usState = 3;
     //        Serial.println("Fuck From left to right, and close bulb");
             Serial.println("From LLL");
           }
@@ -129,6 +148,37 @@ void loop() {
     usSmiliarDiff = abs(cmMsec1 - cmMsec2);
   }
 
+  
+  if (currentMillis - previousMillis >= interval) {
+    if(usState == 0 || usState == 1)
+      usState = -1;
+    
+    if(cmMsec3 < 20){
+      downAscend = cmMsec3;
+
+      if(cmMsec3 - downAscend < 10){
+        downAscendTimes++;
+      }
+      if(downAscendTimes > 10){
+        usState = 1; //Close Fans
+        downAscendTimes = 0;
+      }
+    }
+
+    if(cmMsec3 < 60 && cmMsec3 > 20){
+      upDescend = cmMsec3;
+
+      if(upDescend - cmMsec3 < 10){
+        upDescendTimes++;
+      }
+      if(upDescendTimes > 10){
+        usState = 0; //Open Fans
+        upDescendTimes = 0;
+      }
+    }
+    
+  }
+
   // 若收到「序列埠監控視窗」的資料，則送到藍牙模組
   if (usState == 0) {
     if(usStateTemp != usState)
@@ -136,6 +186,12 @@ void loop() {
   }else if (usState == 1) {
     if(usStateTemp != usState)
       Serial1.print('1');
+  }else if (usState == 2) {
+    if(usStateTemp != usState)
+      Serial1.print('2');
+  }else if (usState == 3) {
+    if(usStateTemp != usState)
+      Serial1.print('3');
   }
  
   // 若收到藍牙模組的資料，則送到「序列埠監控視窗」
@@ -144,6 +200,14 @@ void loop() {
     Serial.print(val);
   }
 
-  usStateTemp = usState;
+
+  if(usState == usStateTemp)
+    recoveryState++;
+
+  if(recoveryState > 10){
+    usState = -1;
+    recoveryState = 0;
+  }
   
+  usStateTemp = usState;
  }
